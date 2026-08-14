@@ -239,7 +239,12 @@ def create_app(
     @app.websocket("/ws/packets")
     async def ws_packets(websocket: WebSocket):
         """Streams emitted packets as they happen. One tap queue is shared
-        by all subscribers (single-user LAN tool); the first to drain wins."""
+        by all subscribers (single-user LAN tool); the first to drain wins.
+
+        Sends a periodic empty heartbeat so a client that disconnected
+        while the tap was idle doesn't leave a zombie handler draining
+        the shared queue (which would steal packets from live clients).
+        """
         await websocket.accept()
         tap = engine.tap
         try:
@@ -252,8 +257,16 @@ def create_app(
                         break
                 if batch:
                     await websocket.send_json({"type": "packets", "packets": batch})
-                else:
-                    await asyncio.sleep(0.05)
+                    continue
+                # idle: receive() returns a disconnect message as soon as the
+                # client closes, so a dead connection can't leave a zombie
+                # handler draining the shared tap (which would steal packets)
+                try:
+                    msg = await asyncio.wait_for(websocket.receive(), timeout=0.05)
+                except asyncio.TimeoutError:
+                    continue
+                if msg["type"] == "websocket.disconnect":
+                    break
         except (WebSocketDisconnect, RuntimeError):
             pass
 
