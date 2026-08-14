@@ -168,6 +168,13 @@ Delivered:
   into `ExecStart` (works for pip/venv/pipx), `daemon-reload`s, enables
   and starts; embeds `JACKOSC_AUTH_TOKEN` into the unit if set in the
   environment at install time; `uninstall` stops/disables/removes.
+- `--lan` flag (main command and `systemd install`): binds `0.0.0.0`,
+  logs the resolved LAN URL (`http://<iface-ip>:port`), and warns loudly
+  when config writes are open (no auth token). Explicit `--host` still
+  wins.
+- `docs/systemd.md` — setup guide with common configurations (LAN +
+  firewall, tokens three ways, venv/pipx, second instance, `--no-web`,
+  drop-ins, troubleshooting).
 - Verified on a fresh venv: `pip install` of the wheel (static UI ships
   inside the wheel), install → enabled+active, audio up at 48 kHz with
   the web UI serving HTTP 200, clean uninstall.

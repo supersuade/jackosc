@@ -16,6 +16,9 @@
 # (PipeWire-JACK via rtkit), so the bridge must run in the same session —
 # it inherits the JACK graph, rtkit privileges, and your XDG paths, and
 # starts/stopped with your desktop. No sudo, no User=.
+#
+# Full setup guide with common configurations: docs/systemd.md
+# (LAN access, auth tokens, multiple instances, --no-web, drop-ins).
 
 [Unit]
 Description=jackosc — JACK audio to OSC bridge

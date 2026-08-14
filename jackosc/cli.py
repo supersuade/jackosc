@@ -6,6 +6,7 @@ import argparse
 import logging
 import os
 import shlex
+import socket
 import subprocess
 import sys
 import time
@@ -52,8 +53,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--config", type=str, default=None, help="config file (default: ~/.config/jackosc/config.json)")
     p.add_argument("--jack-name", type=str, default=None, help="JACK client name (overrides config)")
-    p.add_argument("--host", default="127.0.0.1", help="web bind host (default 127.0.0.1)")
+    p.add_argument("--host", default=None, help="web bind host (default 127.0.0.1, or 0.0.0.0 with --lan)")
     p.add_argument("--port", type=int, default=8080, help="web port (default 8080)")
+    p.add_argument("--lan", action="store_true", help="bind all interfaces for LAN access (0.0.0.0); warns if config writes are open")
     p.add_argument("--no-web", action="store_true", help="run without the web server")
     p.add_argument("--auth-token", default=None, help="require this bearer token for config writes (env JACKOSC_AUTH_TOKEN)")
     p.add_argument("--verbose", action="store_true")
@@ -62,8 +64,9 @@ def build_parser() -> argparse.ArgumentParser:
     sysd = sub.add_parser("systemd", help="manage the systemd user unit")
     sysa = sysd.add_subparsers(dest="action", required=True, metavar="action")
     ins = sysa.add_parser("install", help="write ~/.config/systemd/user/jackosc.service, enable and start it")
-    ins.add_argument("--host", default="127.0.0.1", help="web bind host (default 127.0.0.1)")
+    ins.add_argument("--host", default=None, help="web bind host (default 127.0.0.1, or 0.0.0.0 with --lan)")
     ins.add_argument("--port", type=int, default=8080, help="web port (default 8080)")
+    ins.add_argument("--lan", action="store_true", help="bind all interfaces for LAN access; warns if no JACKOSC_AUTH_TOKEN")
     ins.add_argument("--no-enable", action="store_true", help="write the unit but don't enable it")
     ins.add_argument("--no-start", action="store_true", help="write + enable but don't start it")
     sysa.add_parser("uninstall", help="stop, disable and remove the unit")
@@ -74,6 +77,21 @@ def build_parser() -> argparse.ArgumentParser:
 def _systemd_user_dir() -> Path:
     base = os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config")
     return Path(base) / "systemd" / "user"
+
+
+def resolve_host(host: str | None, lan: bool) -> str:
+    """--host wins; otherwise --lan implies all interfaces."""
+    return host or ("0.0.0.0" if lan else "127.0.0.1")
+
+
+def _lan_ip() -> str | None:
+    """Primary LAN address, found via a connect() that sends no packets."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("10.255.255.255", 1))
+            return s.getsockname()[0]
+    except OSError:
+        return None
 
 
 def cmd_systemd(args: argparse.Namespace, log: logging.Logger) -> int:
@@ -87,12 +105,16 @@ def cmd_systemd(args: argparse.Namespace, log: logging.Logger) -> int:
             return None
 
     if args.action == "install":
+        host = resolve_host(args.host, args.lan)
         token = os.environ.get("JACKOSC_AUTH_TOKEN")
+        if args.lan and not token:
+            log.warning("--lan exposes the web UI to the LAN and config writes are OPEN — "
+                        "set JACKOSC_AUTH_TOKEN and re-run install to gate them")
         env_line = f"Environment=JACKOSC_AUTH_TOKEN={token.replace('%', '%%')}\n" if token else ""
         unit.parent.mkdir(parents=True, exist_ok=True)
         unit.write_text(
             _SYSTEMD_UNIT.format(
-                execstart=f"ExecStart={shlex.quote(sys.executable)} -m jackosc --host {args.host} --port {args.port}",
+                execstart=f"ExecStart={shlex.quote(sys.executable)} -m jackosc --host {host} --port {args.port}",
                 env=env_line,
             ),
         )
@@ -160,6 +182,10 @@ def main(argv: list[str] | None = None) -> int:
 
     secret = os.environ.get("JACKOSC_AUTH_TOKEN") or args.auth_token or cfg.auth_token
 
+    if args.lan and not secret:
+        log.warning("--lan exposes the web UI to the LAN and config writes are OPEN — "
+                    "set JACKOSC_AUTH_TOKEN (or pass --auth-token) to gate writes")
+
     state = ValueStore()
     engine = AnalysisEngine(state)
     try:
@@ -181,10 +207,17 @@ def main(argv: list[str] | None = None) -> int:
                 time.sleep(3600)
         import uvicorn
 
+        host = resolve_host(args.host, args.lan)
         app = create_app(engine, state, store, ConfigAuth(secret))
-        log.info("web UI at http://%s:%d (config writes%s)", args.host, args.port,
-                 " require auth token" if secret else " open")
-        uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+        if host == "0.0.0.0":
+            lan = _lan_ip()
+            log.info("web UI at http://%s:%d (LAN: http://%s:%d, config writes%s)",
+                     host, args.port, lan or "<iface>", args.port,
+                     " require auth token" if secret else " OPEN")
+        else:
+            log.info("web UI at http://%s:%d (config writes%s)", host, args.port,
+                     " require auth token" if secret else " open")
+        uvicorn.run(app, host=host, port=args.port, log_level="info")
     except KeyboardInterrupt:
         pass
     finally:
