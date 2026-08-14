@@ -213,6 +213,27 @@ def test_type_switch_to_multiband_applies(page, server):
     assert len(rules[0]["bands"]) == 3
 
 
+def test_drag_edits_selected_rule_range(page, server):
+    """Drag on the spectrum edits the selected rule's range (no new rule)."""
+    open_app(page, server)
+    add_channel(page)
+    add_rule(page)
+    page.select_option('[data-rule] [data-path$=".type"]', "frequency_map")
+    page.wait_for_timeout(DEBOUNCE)
+    # select the rule box (synthetic click on the box itself, off any control)
+    page.evaluate("document.querySelector('[data-rule]').dispatchEvent(new MouseEvent('click', { bubbles: true }))")
+    canvas = page.locator("#channels .card canvas")
+    box = canvas.bounding_box()
+    page.mouse.move(box["x"] + box["width"] * 0.15, box["y"] + 60)
+    page.mouse.down()
+    page.mouse.move(box["x"] + box["width"] * 0.30, box["y"] + 60, steps=4)
+    page.mouse.up()
+    page.wait_for_timeout(DEBOUNCE)
+    rules = _api(server)["config"]["channels"][0]["rules"]
+    assert len(rules) == 1  # edited in place, not a new rule
+    assert rules[0]["f0"] > 500 and rules[0]["f1"] > rules[0]["f0"]  # dragged range
+
+
 def test_packet_inspector_test_send(page, server):
     open_app(page, server)
     answers = ["lights", "127.0.0.1", "9000"]

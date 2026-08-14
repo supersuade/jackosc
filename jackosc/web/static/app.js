@@ -1136,7 +1136,6 @@ function updateCursorLabel(canvas, label, ci, e) {
 function attachDrag(canvas, ci) {
   canvas.style.cursor = "crosshair";
   canvas.addEventListener("pointerdown", (e) => {
-    if (selectedRule && Number(selectedRule.split(":")[0]) === ci) setSelectedRule(null);
     drag = { ci, x0: e.offsetX, x1: null };
     canvas.setPointerCapture(e.pointerId);
   });
@@ -1171,10 +1170,24 @@ function finishBand() {
   const x1 = px(Math.max(drag.x0, drag.x1));
   const k0 = Math.pow(x0 / plotW, 1.5) * (n - 1);
   const k1 = Math.pow(x1 / plotW, 1.5) * (n - 1);
-  if (k1 - k0 < 1) return; // click, not a drag
+  const hzAt = (x) => Math.pow(px(x) / plotW, 1.5) * (n - 1) * sr / ch.window;
+
+  if (k1 - k0 < 1) {
+    // click, not a drag: toggle the selection off (if it was on this channel)
+    if (selectedRule && Number(selectedRule.split(":")[0]) === drag.ci) {
+      setSelectedRule(null);
+    }
+    return;
+  }
   const f0 = Math.round((k0 * sr) / ch.window);
   const f1 = Math.round((k1 * sr) / ch.window);
   if (f1 <= f0) return;
+
+  if (selectedRule && Number(selectedRule.split(":")[0]) === drag.ci) {
+    editSelectedRuleRange(drag.ci, f0, f1, hzAt(drag.x0));
+    return;
+  }
+  // nothing selected: create a new frequency_map rule, as before
   const rule = defaultRule("frequency_map");
   rule.f0 = f0;
   rule.f1 = f1;
@@ -1184,6 +1197,35 @@ function finishBand() {
   applyNow();
   const el = document.querySelector(`[data-rule="${drag.ci}:${cfg.channels[drag.ci].rules.length - 1}"]`);
   if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+// A drag on the spectrum edits the selected rule's range:
+// amplitude → its single frequency; multiband → the band under the drag
+// start (or a new band); range rules → f0/f1 (or fmin/fmax).
+function editSelectedRuleRange(ci, f0, f1, startHz) {
+  const [sci, sri] = selectedRule.split(":").map(Number);
+  if (sci !== ci) return;
+  const rule = cfg.channels[ci].rules[sri];
+  if (!rule) return;
+  if (rule.type === "amplitude") {
+    rule.freq = Math.round((f0 + f1) / 2);
+  } else if (rule.type === "multiband") {
+    const band = (rule.bands || []).find((b) => b.f0 <= startHz && startHz <= b.f1);
+    if (band) {
+      band.f0 = f0;
+      band.f1 = f1;
+    } else {
+      rule.bands.push({ f0, f1, method: "power", cal_min: 0, cal_max: null, clamp: true, curve: "linear", curve_pow: 2 });
+    }
+  } else if ("f0" in rule && "f1" in rule) {
+    rule.f0 = f0;
+    rule.f1 = f1;
+  } else {
+    rule.fmin = f0;
+    rule.fmax = f1;
+  }
+  renderConfig();
+  applyNow();
 }
 
 // ---------- OSC packet inspector --------------------------------------
