@@ -387,6 +387,29 @@ button.mini { padding: 0.15rem 0.5rem; font-size: 0.8rem; }
 
 .calib .fld input { width: 5.5rem; }
 
+button.calibrating {
+  position: relative;
+  color: transparent; /* hide the label while the spinner shows */
+  pointer-events: none;
+}
+
+button.calibrating::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(139, 147, 167, 0.3);
+  border-top-color: var(--fg);
+  border-radius: 50%;
+  animation: calibrate-spin 0.7s linear infinite;
+}
+
+@keyframes calibrate-spin {
+  to { transform: rotate(360deg); }
+}
+
 /* ---- multiband bands ---- */
 
 .bands {

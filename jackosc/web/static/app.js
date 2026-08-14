@@ -721,6 +721,18 @@ async function doCalibrate(ci, ri, band) {
   const rule = ch.rules[ri];
   if (rule.type !== "frequency_map" && rule.type !== "multiband" && rule.type !== "onset") return;
   textDirty = false; // config is already applied; don't let pending text overwrite
+  const btn = document.querySelector(
+    band != null
+      ? `[data-act="calibrate-band"][data-ci="${ci}"][data-ri="${ri}"][data-bi="${band}"]`
+      : `[data-act="calibrate"][data-ci="${ci}"][data-ri="${ri}"]`,
+  );
+  const setCalibrating = (on) => {
+    if (btn) {
+      btn.classList.toggle("calibrating", on);
+      btn.disabled = on;
+    }
+  };
+  setCalibrating(true);
   try {
     const data = await api(
       `/api/channels/${encodeURIComponent(ch.name)}/rules/${ri}/calibrate`,
@@ -737,6 +749,8 @@ async function doCalibrate(ci, ri, band) {
     }
   } catch (e) {
     showToast("calibrate failed: " + e.message);
+  } finally {
+    setCalibrating(false); // no-op after a successful re-render, works on failure
   }
 }
 
