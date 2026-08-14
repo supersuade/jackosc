@@ -231,6 +231,14 @@ button.mini { padding: 0.15rem 0.5rem; font-size: 0.8rem; }
   margin-bottom: 0.75rem;
 }
 
+.ch-editor.collapsed .ch-body { display: none; }
+
+.ch-toggle {
+  padding: 0.1rem 0.35rem;
+  font-size: 0.75rem;
+  line-height: 1;
+}
+
 .ch-head {
   display: flex;
   flex-wrap: wrap;
@@ -243,6 +251,13 @@ button.mini { padding: 0.15rem 0.5rem; font-size: 0.8rem; }
 .ch-head .fld:first-child input { width: 8rem; font-weight: 600; }
 .ch-head .fld:first-child { flex: 1; }
 .ch-head .fld:first-child input { width: 100%; }
+
+.ch-body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
 
 .fld {
   display: inline-flex;
@@ -310,11 +325,35 @@ button.mini { padding: 0.15rem 0.5rem; font-size: 0.8rem; }
 
 .rule-params {
   display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin-top: 0.4rem;
+}
+
+.pg {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.pg-label {
+  flex: none;
+  min-width: 3.6rem;
+  font-size: 0.68rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding-top: 0.38rem;
+}
+
+.pg-body {
+  display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 0.5rem;
-  margin-top: 0.4rem;
 }
+
+.rule-head .pat.dup { border-color: var(--err); }
 
 .rule-targets {
   margin-top: 0.3rem;

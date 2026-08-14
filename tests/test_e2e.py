@@ -179,6 +179,23 @@ def test_help_modal_opens_and_closes(page, server):
     expect(page.locator("#helpModal")).to_be_hidden()
 
 
+def test_collapse_and_unique_patterns(page, server):
+    open_app(page, server)
+    add_channel(page)
+    add_rule(page)
+    # second rule gets a uniquified pattern
+    page.click('.ch-editor [data-act="add-rule"]')
+    page.wait_for_timeout(DEBOUNCE)
+    pats = page.eval_on_selector_all("[data-rule] .pat", "els => els.map(e => e.value)")
+    assert pats[0] == "/kick/amplitude"
+    assert pats[1] == "/kick/amplitude/2"
+    # collapse hides the body; expand restores it
+    page.click('[data-act="toggle-channel"]')
+    expect(page.locator(".ch-editor")).to_have_class("ch-editor collapsed")
+    page.click('[data-act="toggle-channel"]')
+    expect(page.locator(".ch-editor")).not_to_have_class("ch-editor collapsed")
+
+
 def test_packet_inspector_test_send(page, server):
     open_app(page, server)
     answers = ["lights", "127.0.0.1", "9000"]

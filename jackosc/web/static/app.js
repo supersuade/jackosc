@@ -10,6 +10,7 @@ let token = localStorage.getItem("jackosc_token") || "";
 let drag = null; // spectrum band drag: { ci, x0, x1 }
 let selectedRule = null; // "ci:ri" of the rule highlighted on the spectrum
 let live = { status: null, channels: [], spectra: {}, values: [], ruleIds: {}, multi: {} };
+const collapsedChannels = new Set(); // channel names hidden in the editor
 
 // undo/redo: snapshots of the full config (JSON strings), session-scoped
 const MAX_HISTORY = 50;
@@ -250,6 +251,34 @@ function renderConfig() {
   document.querySelectorAll(".rule").forEach((el) =>
     el.classList.toggle("selected", el.dataset.rule === selectedRule),
   );
+  markDuplicatePatterns();
+  syncLabelTitles();
+}
+
+// Red-flag rules whose OSC address pattern is used by more than one rule.
+function markDuplicatePatterns() {
+  const counts = new Map();
+  for (const ch of cfg.channels) for (const r of ch.rules)
+    counts.set(r.osc_pattern, (counts.get(r.osc_pattern) || 0) + 1);
+  document.querySelectorAll("[data-rule] .pat").forEach((input) => {
+    const el = input.closest("[data-rule]");
+    const [ci, ri] = el.dataset.rule.split(":").map(Number);
+    const rule = cfg.channels[ci] && cfg.channels[ci].rules[ri];
+    const n = rule ? counts.get(rule.osc_pattern) || 0 : 0;
+    input.classList.toggle("dup", n > 1);
+    input.title = n > 1
+      ? `osc pattern is NOT unique (${n} rules use it)`
+      : "OSC address pattern, e.g. /kick/amp";
+  });
+}
+
+// Hovering a field's label shows the same tooltip as the control it wraps.
+function syncLabelTitles() {
+  document.querySelectorAll(".fld, .tg").forEach((label) => {
+    if (label.title) return; // explicit label titles win (e.g. target toggles)
+    const ctl = label.querySelector("input, select");
+    if (ctl && ctl.title) label.title = ctl.title;
+  });
 }
 
 function renderChannelsEditor() {
@@ -269,19 +298,23 @@ function channelEditor(ch, ci) {
   const rules = ch.rules
     .map((r, ri) => ruleEditor(ch, r, ci, ri))
     .join("");
+  const collapsed = collapsedChannels.has(ch.name);
   const d = document.createElement("div");
-  d.className = "ch-editor";
+  d.className = "ch-editor" + (collapsed ? " collapsed" : "");
   d.innerHTML = `
     <div class="ch-head">
+      <button class="ch-toggle" data-act="toggle-channel" data-ci="${ci}" title="${collapsed ? "Expand channel" : "Collapse channel"}">${collapsed ? "▸" : "▾"}</button>
       ${field(ci, null, "name", "name", `title="Channel name (JACK port)"`)}
-      ${field(ci, null, "connect_to", "connect", `list="connectOptions" placeholder="manual" title="JACK source to auto-connect: 'auto' = system:capture_N; empty = leave unpatched (use a patchbay)"`)}
-      ${field(ci, null, "window", "window", `type="number" step="64" title="FFT window size (samples)"`)}
-      ${field(ci, null, "hop", "hop", `type="number" step="1" title="Window advance (samples)"`)}
       <button data-act="dup-channel" data-ci="${ci}" title="Duplicate channel">⧉</button>
       <button data-act="del-channel" data-ci="${ci}" class="danger" title="Delete channel">✕</button>
     </div>
-    <div class="rules">${rules}</div>
-    <button data-act="add-rule" data-ci="${ci}" class="mini" title="Add a rule to this channel">+ Rule</button>`;
+    <div class="ch-body">
+      ${field(ci, null, "connect_to", "connect", `list="connectOptions" placeholder="manual" title="JACK source to auto-connect: 'auto' = system:capture_N; empty = leave unpatched (use a patchbay)"`)}
+      ${field(ci, null, "window", "window", `type="number" step="64" title="FFT window size (samples)"`)}
+      ${field(ci, null, "hop", "hop", `type="number" step="1" title="Window advance (samples)"`)}
+      <div class="rules">${rules}</div>
+      <button data-act="add-rule" data-ci="${ci}" class="mini" title="Add a rule to this channel">+ Rule</button>
+    </div>`;
   return d;
 }
 
@@ -305,6 +338,23 @@ function ruleEditor(ch, r, ci, ri) {
         : `<label class="fld">threshold<input data-path="${p}.threshold" type="number" step="any" placeholder="uncalibrated" value="${esc(r.threshold ?? "")}" title="Flux trigger level; output silent until set"></label>`}
       <button data-act="calibrate" data-ci="${ci}" data-ri="${ri}" class="mini" title="${r.type === "onset" ? "Capture ~3 s of audio and set the trigger threshold" : "Capture ~3 s of audio and set cal_min/cal_max"}">${r.type === "onset" ? "Auto-calibrate threshold" : "Auto-calibrate (3 s)"}</button>
     </div>` : "";
+  const output = `
+    ${r.type === "onset" ? "" : `
+    <label class="fld">curve
+      <select data-path="${p}.curve" title="Shaping: linear, log (compresses), pow (accentuates)">
+        ${["linear", "log", "pow"].map((c) => `<option value="${c}" ${r.curve === c ? "selected" : ""}>${c}</option>`).join("")}
+      </select>
+    </label>
+    ${r.curve === "pow" ? `<label class="fld">pow<input data-path="${p}.curve_pow" type="number" step="0.1" value="${esc(r.curve_pow)}" title="Exponent for the pow curve"></label>` : ""}
+    <label class="fld">attack/rel ms<input data-path="${p}.smoothing.0" type="number" step="1" value="${esc(r.smoothing[0])}" title="Attack (rise) time in ms; 0 = instant"></label>
+    <label class="fld">rel<input data-path="${p}.smoothing.1" type="number" step="1" value="${esc(r.smoothing[1])}" title="Release (fall) time in ms; 0 = instant"></label>`}
+    <label class="fld">min Δ<input data-path="${p}.min_change" type="number" step="0.001" value="${esc(r.min_change)}" title="Skip sending when the change is smaller than this"></label>`;
+  const gate = `
+    ${showInvert ? `
+    <label class="tg"><input type="checkbox" data-path="${p}.invert" ${r.invert ? "checked" : ""} title="Output 1 - x (flips polarity)"> invert</label>` : ""}
+    ${showGate ? `
+    <label class="fld">gate on<input data-path="${p}.gate_on" type="number" step="any" placeholder="off" value="${esc(r.gate_on ?? "")}" title="Open the gate when the value >= this"></label>
+    <label class="fld">gate off<input data-path="${p}.gate_off" type="number" step="any" placeholder="${r.gate_on != null ? (r.gate_on / 2).toFixed(2) : "half"}" value="${esc(r.gate_off ?? "")}" title="Close the gate when the value < this (default: half of gate on)"></label>` : ""}`;
   const d = document.createElement("div");
   d.className = "rule";
   d.dataset.rule = `${ci}:${ri}`;
@@ -321,22 +371,9 @@ function ruleEditor(ch, r, ci, ri) {
       <button data-act="del-rule" data-ci="${ci}" data-ri="${ri}" class="danger" title="Delete rule">✕</button>
     </div>
     <div class="rule-params">
-      ${ruleParams(r, p)}
-      ${r.type === "onset" ? "" : `
-      <label class="fld">curve
-        <select data-path="${p}.curve" title="Shaping: linear, log (compresses), pow (accentuates)">
-          ${["linear", "log", "pow"].map((c) => `<option value="${c}" ${r.curve === c ? "selected" : ""}>${c}</option>`).join("")}
-        </select>
-      </label>
-      ${r.curve === "pow" ? `<label class="fld">pow<input data-path="${p}.curve_pow" type="number" step="0.1" value="${esc(r.curve_pow)}" title="Exponent for the pow curve"></label>` : ""}
-      <label class="fld">attack/rel ms<input data-path="${p}.smoothing.0" type="number" step="1" value="${esc(r.smoothing[0])}" title="Attack (rise) time in ms; 0 = instant"></label>
-      <label class="fld">rel<input data-path="${p}.smoothing.1" type="number" step="1" value="${esc(r.smoothing[1])}" title="Release (fall) time in ms; 0 = instant"></label>`}
-      <label class="fld">min Δ<input data-path="${p}.min_change" type="number" step="0.001" value="${esc(r.min_change)}" title="Skip sending when the change is smaller than this"></label>
-      ${showInvert ? `
-      <label class="tg"><input type="checkbox" data-path="${p}.invert" ${r.invert ? "checked" : ""} title="Output 1 - x (flips polarity)"> invert</label>` : ""}
-      ${showGate ? `
-      <label class="fld">gate on<input data-path="${p}.gate_on" type="number" step="any" placeholder="off" value="${esc(r.gate_on ?? "")}" title="Open the gate when the value >= this"></label>
-      <label class="fld">gate off<input data-path="${p}.gate_off" type="number" step="any" placeholder="${r.gate_on != null ? (r.gate_on / 2).toFixed(2) : "half"}" value="${esc(r.gate_off ?? "")}" title="Close the gate when the value < this (default: half of gate on)"></label>` : ""}
+      <div class="pg"><span class="pg-label">detector</span><div class="pg-body">${ruleParams(r, p)}</div></div>
+      <div class="pg"><span class="pg-label">output</span><div class="pg-body">${output}</div></div>
+      ${gate.trim() ? `<div class="pg"><span class="pg-label">gate</span><div class="pg-body">${gate}</div></div>` : ""}
     </div>
     ${r.type === "multiband" ? bandsEditor(r, p, ci, ri) : ""}
     <div class="rule-targets">${targets ? `send to: ${targets}` : ""}</div>
@@ -518,6 +555,12 @@ function onClick(e) {
     const ci = Number(btn.dataset.ci);
     const ri = Number(btn.dataset.ri);
     if (act === "add-channel") addChannel();
+    else if (act === "toggle-channel") {
+      const name = cfg.channels[ci].name;
+      if (collapsedChannels.has(name)) collapsedChannels.delete(name);
+      else collapsedChannels.add(name);
+      renderConfig();
+    }
     else if (act === "dup-channel") {
       const copy = JSON.parse(JSON.stringify(cfg.channels[ci]));
       copy.name = dupName(copy.name);
@@ -526,9 +569,16 @@ function onClick(e) {
       applyNow();
     }
     else if (act === "del-channel") { cfg.channels.splice(ci, 1); renderConfig(); applyNow(); }
-    else if (act === "add-rule") { cfg.channels[ci].rules.push(defaultRule("amplitude")); renderConfig(); applyNow(); }
+    else if (act === "add-rule") {
+      const rule = defaultRule("amplitude");
+      rule.osc_pattern = uniquifyPattern(`/${cfg.channels[ci].name}/amplitude`);
+      cfg.channels[ci].rules.push(rule);
+      renderConfig();
+      applyNow();
+    }
     else if (act === "dup-rule") {
       const copy = JSON.parse(JSON.stringify(cfg.channels[ci].rules[ri]));
+      copy.osc_pattern = uniquifyPattern(copy.osc_pattern); // avoid address collision
       cfg.channels[ci].rules.splice(ri + 1, 0, copy);
       renderConfig();
       applyNow();
@@ -585,6 +635,15 @@ function dupName(name) {
     candidate = (base + n).slice(0, 64);
   } while (cfg.channels.some((c) => c.name === candidate));
   return candidate;
+}
+
+// OSC address pattern that no rule in the config currently uses.
+function uniquifyPattern(base) {
+  const used = new Set();
+  for (const ch of cfg.channels) for (const r of ch.rules) used.add(r.osc_pattern);
+  let cand = base, n = 2;
+  while (used.has(cand)) cand = `${base}/${n++}`;
+  return cand;
 }
 
 function addChannel() {
@@ -1071,7 +1130,7 @@ function finishBand() {
   const rule = defaultRule("frequency_map");
   rule.f0 = f0;
   rule.f1 = f1;
-  rule.osc_pattern = `/ch/${drag.ci}/band/${cfg.channels[drag.ci].rules.length}`;
+  rule.osc_pattern = uniquifyPattern(`/${ch.name}/frequency_map`);
   cfg.channels[drag.ci].rules.push(rule);
   renderConfig();
   applyNow();
