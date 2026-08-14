@@ -270,7 +270,13 @@ button.mini { padding: 0.15rem 0.5rem; font-size: 0.8rem; }
 .fld input, .fld select { font-size: 0.8rem; width: 5.5rem; }
 .fld input[type="number"] { width: 5rem; }
 
-.rules { display: flex; flex-direction: column; gap: 0.5rem; margin: 0.25rem 0; }
+.rules {
+  flex: 1 0 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin: 0.25rem 0;
+}
 
 .rule {
   position: relative;

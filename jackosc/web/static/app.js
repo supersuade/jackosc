@@ -23,15 +23,6 @@ const NUM_FIELDS = new Set([
   "ratio", "hold_ms", "decay_ms", "sample_rate",
 ]);
 const RULE_SHARED = ["type", "osc_pattern", "targets", "curve", "curve_pow", "smoothing", "min_change", "enabled", "invert", "gate_on", "gate_off"];
-const RULE_PARAMS = {
-  amplitude: ["freq", "gain", "offset"],
-  dominant_frequency: ["fmin", "fmax", "normalize"],
-  frequency_map: ["f0", "f1", "method", "cal_min", "cal_max", "clamp"],
-  onset: ["f0", "f1", "threshold", "ratio", "hold_ms", "decay_ms"],
-  centroid: ["fmin", "fmax", "method", "percent", "normalize"],
-  pitch: ["fmin", "fmax", "threshold", "normalize"],
-  multiband: ["bands"],
-};
 
 // ---------- utils ---------------------------------------------------
 
@@ -225,6 +216,17 @@ $("apply").addEventListener("click", async () => {
 });
 $("reload").addEventListener("click", loadConfig);
 
+$("downloadConfig").addEventListener("click", () => {
+  const blob = new Blob([JSON.stringify(cfg, null, 2)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `jackosc-config-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(a.href);
+});
+
 $("token").value = token;
 $("token").addEventListener("input", (e) => {
   token = e.target.value;
@@ -312,8 +314,9 @@ function channelEditor(ch, ci) {
       ${field(ci, null, "connect_to", "connect", `list="connectOptions" placeholder="manual" title="JACK source to auto-connect: 'auto' = system:capture_N; empty = leave unpatched (use a patchbay)"`)}
       ${field(ci, null, "window", "window", `type="number" step="64" title="FFT window size (samples)"`)}
       ${field(ci, null, "hop", "hop", `type="number" step="1" title="Window advance (samples)"`)}
-      <div class="rules">${rules}</div>
-      <button data-act="add-rule" data-ci="${ci}" class="mini" title="Add a rule to this channel">+ Rule</button>
+      <div class="rules">${rules}
+        <button data-act="add-rule" data-ci="${ci}" class="mini" title="Add a rule to this channel">+ Rule</button>
+      </div>
     </div>`;
   return d;
 }
@@ -386,7 +389,8 @@ function ruleEditor(ch, r, ci, ri) {
 }
 
 function bandsEditor(r, p, ci, ri) {
-  const rows = r.bands
+  const bands = r.bands || []; // guard against hand-edited configs
+  const rows = bands
     .map((b, bi) => `
       <div class="band">
         <span class="band-idx">${bi}</span>
@@ -503,6 +507,7 @@ function onInput(e) {
   const el = e.target;
   const path = el.dataset.path;
   if (!path || !cfg) return;
+  if (el.tagName === "SELECT") return; // selects fire input+change; onChange owns them
   const last = path.split(".").pop();
   let v;
   if (NUM_FIELDS.has(last) || /^\d+$/.test(last)) v = parseFloat(el.value) || 0;
@@ -532,20 +537,43 @@ function onChange(e) {
     return;
   }
   if (el.tagName === "SELECT") {
-    setPath(cfg, path, el.value);
     if (path.endsWith(".type")) {
       const m = path.match(/^channels\.(\d+)\.rules\.(\d+)\.type$/);
-      if (m) pruneRule(Number(m[1]), Number(m[2]));
+      if (m) {
+        // switchRuleType reads the OLD type for the pattern check, then rebuilds
+        switchRuleType(Number(m[1]), Number(m[2]), el.value);
+        renderConfig();
+        applyNow();
+        return;
+      }
     }
+    setPath(cfg, path, el.value);
     renderConfig();
     applyNow();
   }
 }
 
-function pruneRule(ci, ri) {
-  const r = cfg.channels[ci].rules[ri];
-  const keep = new Set([...RULE_SHARED, ...(RULE_PARAMS[r.type] || [])]);
-  for (const k of Object.keys(r)) if (!keep.has(k)) delete r[k];
+function isDefaultPattern(pattern, channel, type) {
+  return new RegExp(`^/${channel}/${type}(/\\d+)?$`).test(pattern);
+}
+
+// Rebuild a rule for a new type: start from the type's defaults (which
+// carry required fields like multiband's `bands`), preserve shared and
+// overlapping values, and regenerate auto-default osc_patterns.
+function switchRuleType(ci, ri, newType) {
+  const old = cfg.channels[ci].rules[ri];
+  const fresh = defaultRule(newType);
+  for (const k of Object.keys(fresh)) {
+    if (k !== "type" && k in old) fresh[k] = old[k]; // keep the new type
+  }
+  for (const k of RULE_SHARED) {
+    if (k in old && !(k in fresh)) fresh[k] = old[k];
+  }
+  const ch = cfg.channels[ci];
+  if (isDefaultPattern(old.osc_pattern, ch.name, old.type)) {
+    fresh.osc_pattern = uniquifyPattern(`/${ch.name}/${newType}`);
+  }
+  cfg.channels[ci].rules[ri] = fresh;
 }
 
 function onClick(e) {

@@ -196,6 +196,22 @@ def test_collapse_and_unique_patterns(page, server):
     expect(page.locator(".ch-editor")).not_to_have_class("ch-editor collapsed")
 
 
+def test_type_switch_to_multiband_applies(page, server):
+    """Regression: switching a new rule to multiband must add bands, follow
+    the pattern, and apply cleanly (used to crash the editor and 422)."""
+    open_app(page, server)
+    add_channel(page)
+    add_rule(page)
+    page.select_option('[data-rule] [data-path$=".type"]', "multiband")
+    expect(page.locator(".band")).to_have_count(3)
+    expect(page.locator('[data-rule] .pat')).to_have_value("/kick/multiband")
+    page.wait_for_timeout(DEBOUNCE)
+    rules = _api(server)["config"]["channels"][0]["rules"]
+    assert len(rules) == 1
+    assert rules[0]["type"] == "multiband"
+    assert len(rules[0]["bands"]) == 3
+
+
 def test_packet_inspector_test_send(page, server):
     open_app(page, server)
     answers = ["lights", "127.0.0.1", "9000"]
