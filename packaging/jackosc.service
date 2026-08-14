@@ -1,0 +1,43 @@
+# jackosc systemd user unit — install on the target machine with:
+#
+#   mkdir -p ~/.config/systemd/user
+#   cp packaging/jackosc.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now jackosc.service
+#
+# or, after `pip install jackosc`, let the CLI write it for you with the
+# correct interpreter baked in:
+#
+#   jackosc systemd install            # write + enable + start
+#   jackosc systemd status
+#   jackosc systemd uninstall
+#
+# User unit, not a system unit: JACK lives inside the login session
+# (PipeWire-JACK via rtkit), so the bridge must run in the same session —
+# it inherits the JACK graph, rtkit privileges, and your XDG paths, and
+# starts/stopped with your desktop. No sudo, no User=.
+
+[Unit]
+Description=jackosc — JACK audio to OSC bridge
+# Ordering after the user's JACK server avoids racing the first connect;
+# jackosc's built-in reconnect monitor covers JACK restarts anyway.
+After=pipewire.service
+Wants=pipewire.service
+
+[Service]
+Type=simple
+# ExecStart depends on how you installed:
+#   pip install --user  → %h/.local/bin/jackosc
+#   venv                → /path/to/venv/bin/python -m jackosc
+#   pipx                → %h/.local/pipx/venvs/jackosc/bin/jackosc
+# (`jackosc systemd install` writes the exact path automatically.)
+ExecStart=%h/.local/bin/jackosc --host 127.0.0.1 --port 8080
+# Config default: ~/.config/jackosc/config.json — create it in the web UI
+# (it saves on first change) or copy one over.
+# Restrict web config writes to yourself:
+# Environment=JACKOSC_AUTH_TOKEN=change-me
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

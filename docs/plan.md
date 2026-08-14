@@ -151,6 +151,30 @@ of truth when editing the modal content.
   file or `JACKOSC_AUTH_TOKEN`; never shown in the UI), plus when the raw
   JSON panel is the right tool (bulk edits, pasting profiles).
 
+### Systemd install — shipped
+
+**Recommendation: a per-user unit, not a system unit.** JACK runs inside
+the login session (PipeWire-JACK, rtkit-granted realtime), so the bridge
+must live in the same session: it inherits the JACK graph, rtkit
+privileges, and XDG paths, starts with the desktop, and needs no sudo.
+`WantedBy=default.target` + `After=pipewire.service` (ordering only; the
+reconnect monitor covers JACK restarts), `Restart=on-failure`.
+
+Delivered:
+
+- `packaging/jackosc.service` — canonical template for manual install.
+- `jackosc systemd install|uninstall|status` — writes the unit into
+  `~/.config/systemd/user/` with the exact interpreter that ran it baked
+  into `ExecStart` (works for pip/venv/pipx), `daemon-reload`s, enables
+  and starts; embeds `JACKOSC_AUTH_TOKEN` into the unit if set in the
+  environment at install time; `uninstall` stops/disables/removes.
+- Verified on a fresh venv: `pip install` of the wheel (static UI ships
+  inside the wheel), install → enabled+active, audio up at 48 kHz with
+  the web UI serving HTTP 200, clean uninstall.
+
+Target-machine prerequisites: Python ≥ 3.11, PipeWire-JACK (or any JACK
+server), and `jack-client`'s libjack at runtime.
+
 ## Cross-cutting
 
 - Auth: writes gated, reads open by design; the `ConfigAuth` seam is the
