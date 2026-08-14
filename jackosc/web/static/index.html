@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>jackosc — JACK → OSC bridge</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <h1>jackosc</h1>
+  <div class="status-wrap">
+    <span id="status" class="status-icon" title="connecting…"></span>
+    <div id="statusTip" class="status-tip"></div>
+  </div>
+  <div class="spacer"></div>
+  <button id="helpBtn" title="Help">?</button>
+  <button id="undoBtn" disabled title="Undo (Ctrl+Z)">Undo</button>
+  <button id="redoBtn" disabled title="Redo (Ctrl+Shift+Z)">Redo</button>
+  <input id="token" type="password" placeholder="auth token (if enabled)" autocomplete="off">
+  <div id="toast" class="toast" hidden></div>
+</header>
+<main>
+  <section id="channels" class="channels"></section>
+
+  <div class="side">
+    <section class="panel">
+      <h2>Channels &amp; rules</h2>
+      <p class="hint">Drag on a spectrum to create a frequency-band rule from the selection. Changes apply automatically.</p>
+      <div id="channelsEditor"></div>
+      <button id="addChannel" title="Add a channel (one JACK input port)">+ Channel</button>
+    </section>
+
+    <section class="panel">
+      <h2>OSC targets</h2>
+      <div id="targetsEditor"></div>
+      <button id="addTarget" title="Add an OSC target (IP:port)">+ Target</button>
+    </section>
+
+    <section class="panel">
+      <h2>General</h2>
+      <div id="general" class="general"></div>
+    </section>
+
+    <section class="panel">
+      <h2>OSC output</h2>
+      <p class="hint">Every message the sender emits appears here (per target, after prefix + min-change gating).</p>
+      <div class="toolbar">
+        <input id="pktFilter" placeholder="filter address/target" title="filter">
+        <button id="pktPause">Pause</button>
+        <span id="pktCount" class="muted"></span>
+      </div>
+      <div class="toolbar">
+        <input id="pktAddr" value="/test" class="mono" title="OSC address">
+        <input id="pktVal" type="number" step="0.01" value="0.5" title="value">
+        <button id="pktSend" class="primary">Send test packet</button>
+      </div>
+      <div id="pktList" class="packets"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Profiles</h2>
+      <div class="toolbar">
+        <select id="profiles"></select>
+        <button id="saveProfile">Save</button>
+        <button id="loadProfile">Load</button>
+        <button id="deleteProfile">Delete</button>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Advanced (JSON)</h2>
+      <textarea id="cfgJson" spellcheck="false" rows="12"></textarea>
+      <div class="toolbar">
+        <button id="apply" class="primary" title="Apply the raw JSON in the textarea (regular edits auto-apply)">Apply JSON</button>
+        <button id="reload">Reload</button>
+      </div>
+    </section>
+  </div>
+</main>
+<div id="helpModal" class="modal" hidden>
+  <div class="modal-box" role="dialog" aria-modal="true" aria-label="Help">
+    <h2>Help</h2>
+
+    <section>
+      <h3>Rule types</h3>
+      <table class="help-table">
+        <tr><th>Rule</th><th>What it outputs</th><th>Good for</th></tr>
+        <tr><td><code>amplitude</code></td><td>Level of one exact frequency (Goertzel), ≈ 0..0.5 × signal; scale with gain</td><td>Tracking a specific tone</td></tr>
+        <tr><td><code>dominant_frequency</code></td><td>Peak frequency in [fmin, fmax] (Hz or 0..1)</td><td>Loudest component; coarse below ~100 Hz</td></tr>
+        <tr><td><code>frequency_map</code></td><td>Band energy → 0..1 via calibration (power = squared magnitudes, sum = magnitudes)</td><td>Band → light intensity</td></tr>
+        <tr><td><code>onset</code></td><td>Pulse (1.0, exponential decay) on sudden energy rise</td><td>Beats/transients → strobes</td></tr>
+        <tr><td><code>centroid</code></td><td>Brightness center-of-mass (Hz) or rolloff (frequency below which N% of energy sits)</td><td>Color temperature / texture</td></tr>
+        <tr><td><code>pitch</code></td><td>Fundamental frequency via YIN — accurate sub-100 Hz</td><td>Bass / monophonic pitch → hue</td></tr>
+        <tr><td><code>multiband</code></td><td>N band energies → one OSC message with N floats</td><td>Multiband control, fewer packets</td></tr>
+      </table>
+    </section>
+
+    <section>
+      <h3>Output pipeline</h3>
+      <p class="pipe">raw → curve → smoothing → gate → invert → min-change → OSC</p>
+      <ul>
+        <li><b>curve</b>: linear, log (compresses quiet content), pow (accentuates peaks).</li>
+        <li><b>smoothing</b>: attack (rise) and release (fall) times in ms; 0 = instant.</li>
+        <li><b>gate</b>: opens when the value ≥ gate_on, closes when &lt; gate_off (default half of on); closed output is exactly 0.</li>
+        <li><b>invert</b>: outputs 1 − x; a gated-off value stays 0, not 1.</li>
+        <li><b>min-change</b>: skips sending when the change is smaller — fewer packets, latest-value semantics.</li>
+        <li>Onset uses its own pulse decay instead of curve/smoothing; multiband applies the stage per band (no gate); Hz outputs (dominant/centroid/pitch) skip invert/gate unless normalized.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h3>Calibration</h3>
+      <ul>
+        <li>Auto-calibrate captures ~3 s of raw values, then sets bounds from percentiles: <code>frequency_map</code> p2/p98 of band energy (spike-robust), <code>onset</code> p95 of flux (~5% of frames trigger), <code>multiband</code> per band p2/p98.</li>
+        <li>Until calibrated a rule outputs NaN — nothing is sent and the meter shows —.</li>
+        <li>Calibrate on typical material — not silence, not the loudest moment — and re-calibrate if the source gain changes.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h3>Window &amp; latency</h3>
+      <ul>
+        <li>window = FFT size in samples; hop = window advance (512 = 50% overlap).</li>
+        <li>Bin width = sample_rate / window ≈ 46.9 Hz @ 48 kHz; analysis latency ≈ window / sample_rate ≈ 21 ms.</li>
+        <li>pitch adds ~2/fmin of buffer latency (≈ 50 ms at fmin = 40 Hz) for accurate low frequencies.</li>
+        <li>Smaller window → finer time, coarser frequency; larger → the opposite.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h3>Settings &amp; JSON</h3>
+      <ul>
+        <li><b>OSC rate</b>: send cadence (messages or bundles per second). Bundles send at most one per cycle, only when something changed.</li>
+        <li><b>auto-connect</b>: treat empty channel connect as "auto" (system:capture_N); an explicit "auto" always connects; empty = leave unpatched for a patchbay (qjackctl/Catia).</li>
+        <li><b>cb warn</b>: the status dot turns red when the callback p99 exceeds this (µs); empty = 25% of the period budget.</li>
+        <li><b>JSON-only settings</b>: <code>version</code> and <code>auth_token</code> (config file or <code>JACKOSC_AUTH_TOKEN</code>; never shown in the UI). The raw JSON panel is for bulk edits and pasting profiles.</li>
+      </ul>
+    </section>
+
+    <div class="modal-actions"><button id="helpClose" class="primary">Close</button></div>
+  </div>
+</div>
+
+<datalist id="connectOptions">
+  <option value="auto">
+  <option value="system:capture_1">
+  <option value="system:capture_2">
+  <option value="system:capture_3">
+  <option value="system:capture_4">
+</datalist>
+
+<script src="/app.js"></script>
+</body>
+</html>
