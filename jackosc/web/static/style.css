@@ -409,6 +409,7 @@ button.mini { padding: 0.15rem 0.5rem; font-size: 0.8rem; }
 
 .band .band-idx { color: var(--muted); font-size: 0.75rem; width: 1.1rem; }
 .band input, .band select { width: 4.5rem; font-size: 0.8rem; }
+.band input.invalid { border-color: var(--err); background: rgba(239, 68, 68, 0.12); }
 .band .mini { font-size: 0.7rem; }
 
 /* ---- targets ---- */

@@ -5,7 +5,7 @@
 const $ = (id) => document.getElementById(id);
 const cards = new Map(); // channel name -> { card, canvas, values }
 let cfg = null; // current config (auto-applied on change)
-let applyTimer = null; // debounce timer for text edits
+let textDirty = false; // a text field has uncommitted edits (committed on blur)
 let token = localStorage.getItem("jackosc_token") || "";
 let drag = null; // spectrum band drag: { ci, x0, x1 }
 let selectedRule = null; // "ci:ri" of the rule highlighted on the spectrum
@@ -76,8 +76,7 @@ function canUndo() { return hIndex > 0; }
 function canRedo() { return hIndex >= 0 && hIndex < history.length - 1; }
 
 function restoreSnapshot(json) {
-  clearTimeout(applyTimer); // drop any pending debounced edit
-  applyTimer = null;
+  textDirty = false; // drop any pending uncommitted edit
   cfg = JSON.parse(json);
   renderConfig();
   updateUndo();
@@ -162,23 +161,33 @@ function showToast(msg, kind = "error") {
 
 // immediate apply (checkboxes, selects, structural ops)
 function applyNow() {
-  clearTimeout(applyTimer);
-  applyTimer = null;
+  textDirty = false; // commits whatever cfg currently holds, incl. pending text
   return applyConfig();
 }
 
-// debounced apply for text/number edits (avoids invalid mid-typing states)
-function scheduleApply() {
-  clearTimeout(applyTimer);
-  applyTimer = setTimeout(applyNow, 400);
+// text/number edits are committed when the field loses focus; skipped while
+// any multiband band is invalid (f0 < f1), so the bad config never hits the
+// server — the flagged inputs keep it visible until corrected.
+document.addEventListener("focusout", () => {
+  if (!textDirty) return;
+  textDirty = false;
+  if (anyInvalidBand()) return;
+  applyNow();
+});
+
+function anyInvalidBand() {
+  for (const ch of cfg.channels) for (const r of ch.rules) {
+    if (r.type !== "multiband") continue;
+    for (const b of r.bands) if (!(b.f0 < b.f1)) return true;
+  }
+  return false;
 }
 
 async function loadConfig() {
   try {
     const data = await api("/api/config");
     cfg = data.config;
-    clearTimeout(applyTimer);
-    applyTimer = null;
+    textDirty = false;
     history = [JSON.stringify(cfg)]; // fresh session history seeded with server state
     hIndex = 0;
     renderStatus(data.status, data.auth_enabled);
@@ -254,6 +263,7 @@ function renderConfig() {
     el.classList.toggle("selected", el.dataset.rule === selectedRule),
   );
   markDuplicatePatterns();
+  markInvalidBands();
   syncLabelTitles();
 }
 
@@ -271,6 +281,25 @@ function markDuplicatePatterns() {
     input.title = n > 1
       ? `osc pattern is NOT unique (${n} rules use it)`
       : "OSC address pattern, e.g. /kick/amp";
+  });
+}
+
+// Red-flag multiband bands where max <= min (f0 >= f1): color the max input.
+function markInvalidBands() {
+  document.querySelectorAll(".band").forEach((row) => {
+    const ruleEl = row.closest("[data-rule]");
+    if (!ruleEl) return;
+    const [ci, ri] = ruleEl.dataset.rule.split(":").map(Number);
+    const bi = Number(row.querySelector(".band-idx").textContent);
+    const rule = cfg.channels[ci] && cfg.channels[ci].rules[ri];
+    const band = rule && rule.bands && rule.bands[bi];
+    const maxInput = row.querySelector('[data-path$=".f1"]');
+    if (!band || !maxInput) return;
+    const invalid = !(band.f0 < band.f1);
+    maxInput.classList.toggle("invalid", invalid);
+    maxInput.title = invalid
+      ? "band invalid: max frequency must be > min frequency"
+      : "Band high edge (Hz)";
   });
 }
 
@@ -514,7 +543,8 @@ function onInput(e) {
   else if (last === "cal_max" || last === "threshold" || last === "gate_on" || last === "gate_off" || last === "sample_rate" || last === "cb_warn_us") v = el.value === "" ? null : parseFloat(el.value);
   else v = el.value;
   setPath(cfg, path, v);
-  scheduleApply(); // debounced: commit once typing pauses
+  textDirty = true; // committed when the field loses focus
+  markInvalidBands(); // live red flag while a band is invalid
 }
 
 function onChange(e) {
@@ -540,7 +570,7 @@ function onChange(e) {
     if (path.endsWith(".type")) {
       const m = path.match(/^channels\.(\d+)\.rules\.(\d+)\.type$/);
       if (m) {
-        // switchRuleType reads the OLD type for the pattern check, then rebuilds
+        // switchRuleType reads the old rule before replacing it
         switchRuleType(Number(m[1]), Number(m[2]), el.value);
         renderConfig();
         applyNow();
@@ -553,13 +583,6 @@ function onChange(e) {
   }
 }
 
-function isDefaultPattern(pattern, channel, type) {
-  return new RegExp(`^/${channel}/${type}(/\\d+)?$`).test(pattern);
-}
-
-// Rebuild a rule for a new type: start from the type's defaults (which
-// carry required fields like multiband's `bands`), preserve shared and
-// overlapping values, and regenerate auto-default osc_patterns.
 function switchRuleType(ci, ri, newType) {
   const old = cfg.channels[ci].rules[ri];
   const fresh = defaultRule(newType);
@@ -570,9 +593,8 @@ function switchRuleType(ci, ri, newType) {
     if (k in old && !(k in fresh)) fresh[k] = old[k];
   }
   const ch = cfg.channels[ci];
-  if (isDefaultPattern(old.osc_pattern, ch.name, old.type)) {
-    fresh.osc_pattern = uniquifyPattern(`/${ch.name}/${newType}`);
-  }
+  // regenerate the osc_pattern on every type change, overwriting the old one
+  fresh.osc_pattern = uniquifyPattern(`/${ch.name}/${newType}`);
   cfg.channels[ci].rules[ri] = fresh;
 }
 
@@ -698,8 +720,7 @@ async function doCalibrate(ci, ri, band) {
   const ch = cfg.channels[ci];
   const rule = ch.rules[ri];
   if (rule.type !== "frequency_map" && rule.type !== "multiband" && rule.type !== "onset") return;
-  clearTimeout(applyTimer); // config is already applied; don't let a stale debounce overwrite
-  applyTimer = null;
+  textDirty = false; // config is already applied; don't let pending text overwrite
   try {
     const data = await api(
       `/api/channels/${encodeURIComponent(ch.name)}/rules/${ri}/calibrate`,
@@ -734,8 +755,7 @@ $("loadProfile").addEventListener("click", async () => {
   try {
     const data = await api(`/api/profiles/${encodeURIComponent(name)}/load`, { method: "POST" });
     cfg = data.config;
-    clearTimeout(applyTimer);
-    applyTimer = null;
+    textDirty = false;
     pushHistory();
     renderConfig();
   } catch (e) { showToast("load failed: " + e.message); }

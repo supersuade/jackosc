@@ -166,6 +166,7 @@ def test_invalid_config_shows_422_toast(page, server):
     page.click('[data-path$=".f0"]')
     page.keyboard.press("Control+a")
     page.keyboard.type("200")
+    page.locator("h1").click()  # blur commits the edit → 422 toast
     expect(page.locator("#toast:not([hidden])")).to_be_visible(timeout=3000)
     expect(page.locator("#toast")).to_contain_text("422")
 
