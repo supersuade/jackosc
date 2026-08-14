@@ -721,6 +721,7 @@ async function doCalibrate(ci, ri, band) {
   const rule = ch.rules[ri];
   if (rule.type !== "frequency_map" && rule.type !== "multiband" && rule.type !== "onset") return;
   textDirty = false; // config is already applied; don't let pending text overwrite
+  const seconds = 3; // capture length — also drives the button's progress-fill duration
   const btn = document.querySelector(
     band != null
       ? `[data-act="calibrate-band"][data-ci="${ci}"][data-ri="${ri}"][data-bi="${band}"]`
@@ -730,13 +731,14 @@ async function doCalibrate(ci, ri, band) {
     if (btn) {
       btn.classList.toggle("calibrating", on);
       btn.disabled = on;
+      if (on) btn.style.setProperty("--calib-dur", `${seconds}s`);
     }
   };
   setCalibrating(true);
   try {
     const data = await api(
       `/api/channels/${encodeURIComponent(ch.name)}/rules/${ri}/calibrate`,
-      { method: "POST", body: JSON.stringify({ seconds: 3, band: band ?? null }) },
+      { method: "POST", body: JSON.stringify({ seconds, band: band ?? null }) },
     );
     cfg = data.config.config;
     pushHistory();

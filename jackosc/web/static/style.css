@@ -389,25 +389,22 @@ button.mini { padding: 0.15rem 0.5rem; font-size: 0.8rem; }
 
 button.calibrating {
   position: relative;
-  color: transparent; /* hide the label while the spinner shows */
+  overflow: hidden; /* keep the growing fill inside the rounded corners */
   pointer-events: none;
 }
 
 button.calibrating::before {
   content: "";
   position: absolute;
-  inset: 0;
-  margin: auto;
-  width: 12px;
-  height: 12px;
-  border: 2px solid rgba(139, 147, 167, 0.3);
-  border-top-color: var(--fg);
-  border-radius: 50%;
-  animation: calibrate-spin 0.7s linear infinite;
+  inset: 0 auto 0 0;
+  width: 0;
+  background: rgba(59, 130, 246, 0.28); /* accent wash, label stays readable */
+  border-right: 1px solid var(--accent);
+  animation: calibrate-fill var(--calib-dur, 3s) linear forwards;
 }
 
-@keyframes calibrate-spin {
-  to { transform: rotate(360deg); }
+@keyframes calibrate-fill {
+  to { width: 100%; }
 }
 
 /* ---- multiband bands ---- */
